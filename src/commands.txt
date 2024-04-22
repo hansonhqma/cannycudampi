@@ -1,0 +1,4 @@
+module load xl_r spectrum-mpi cuda
+nvcc -O3 -gencode arch=compute_70,code=sm_70 canny.cu -o canny --expt-relaxed-constexpr
+salloc -N 1 --partition=el8 --gres=gpu:4 -t 5
+./canny
