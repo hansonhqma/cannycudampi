@@ -36,10 +36,10 @@ __global__ void convolution_2d(uint8_t *&originalImage, const char maskOption, i
         mask = Gy;
     }
     // Calculate the global thread positions
-    size_t index = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    size_t index = (uint64_t) blockIdx.x * (uint64_t) blockDim.x + threadIdx.x;
     size_t col = index % width;
     size_t row = index / width;
-    if (index < (uint64_t) width * height)
+    if (index < (uint64_t) width * (uint64_t) height)
     {
         // Starting index for calculation
         size_t start_r = row - 1;
@@ -75,31 +75,124 @@ __global__ void convolution_2d(uint8_t *&originalImage, const char maskOption, i
 __global__ void calculateGradiantAndAngles(double *&resultImage, double *&angles,
                                            int* &SobelX, int* &SobelY, size_t width, size_t height)
 {
-    size_t index = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (index < (uint64_t) width * height) {
+    size_t index = (uint64_t) blockIdx.x * (uint64_t) blockDim.x + threadIdx.x;
+    if (index < (uint64_t) width * (uint64_t) height) {
         double magnitude = pow(pow(SobelX[index], 2) + pow(SobelY[index], 2), 0.5);
-        resultImage[index] = magnitude;
         if (!Gmax || magnitude > Gmax) {
             Gmax = magnitude;
         }
-        angles[index] = atan2(SobelY[index], SobelX[index]);
+        resultImage[index] = magnitude;
+        angles[index] = atan2(SobelY[index], SobelX[index]) * 180 / 3.14;
+        if (angles[index] < 0)
+            angles[index] += 180;
     }
     __syncthreads();
 }
 
 __global__ void normalizeG(double *&resultImage, size_t width, size_t height)
 {
-    size_t index = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (index < (uint64_t) width * height) {
+    size_t index = (uint64_t) blockIdx.x * (uint64_t) blockDim.x + threadIdx.x;
+    if (index < (uint64_t) width * (uint64_t) height) {
         resultImage[index] /= Gmax;
         resultImage[index] *= 255;
     }
 }
 
-__global__ void writeResult(uint8_t *&resultImage, double *&calculations, size_t width, size_t height) {
+__global__ void nonmaximumSuppression(double *&G, double *&angle, double *&suppressed, size_t width, size_t height) {
+    size_t index = (uint64_t) blockIdx.x * (uint64_t) blockDim.x + threadIdx.x;
+    // calculate x and y values for 2D representation
+    uint64_t x = index % width;
+    uint64_t y = index / width;
+
+    if (index < (uint64_t) width * (uint64_t) height) {
+        if (x >= 1 && x < width-1 && y >= 1 && y < height-1) {
+            // values for adjacent pixels
+            uint64_t y0 = ((y + height - 1) % height) * width;
+            uint64_t y2 = ((y + 1) % height) * width;
+            uint64_t x0 = (x + width - 1) % width;
+            uint64_t x2 = (x + 1) % width;
+            
+            double adjacent1 = 255;
+            double adjacent2 = 255;
+            
+            // Case 1: comparing left and right pixels
+            if ((0 <= angle[index] && angle[index] < 22.5) || (157.5 <= angle[index] && angle[index] <= 180)) {
+                adjacent1 = G[index-1];
+                adjacent2 = G[index+1];
+            } 
+            
+            // Case 2: comparing bottom right and top left
+            else if ((22.5 <= angle[index] && angle[index] < 67.5)) {
+                adjacent1 = G[x2 + y0];
+                adjacent2 = G[x0 + y2];
+            }
+            
+            // Case 3: comparing top and bottom
+            else if ((67.5 <= angle[index] && angle[index] < 112.5)) {
+                adjacent1 = G[x + y0];
+                adjacent2 = G[x + y2];
+            }
+
+            // Case 4: comparing top right and bottom left
+            else if ((112.5 <= angle[index] && angle[index] < 157.5)) {
+                adjacent1 = G[x2 + y2];
+                adjacent2 = G[x0 + y0];
+            }
+
+            // If the current pixel's change is the most extreme relative to its neighbors keep
+            // Otherwise "suppress" the pixel by setting it to 0
+            if ((G[index] < adjacent1) || (G[index] < adjacent2))
+                suppressed[index] = 0;
+            else
+                suppressed[index] = G[index];
+        }
+    }
+}
+
+__global__ void doubleThreshold(double *&input, uint8_t *&thresh, int lowThresh, int highThresh, size_t width, size_t height) {
+    size_t index = (uint64_t) blockIdx.x * (uint64_t) blockDim.x + threadIdx.x;
+
+    if (index < (uint64_t) width * (uint64_t) height) {
+        if (input[index] < lowThresh) {
+            thresh[index] = 0;
+        } else if (input[index] > highThresh) {
+            thresh[index] = 255;
+        } else {
+            thresh[index] = (uint8_t) input[index];
+        }
+    }
+}
+
+__global__ void hysteresis(uint8_t *&input, uint8_t *&hyst, size_t width, size_t height) {
+    size_t index = (uint64_t) blockIdx.x * (uint64_t) blockDim.x + threadIdx.x;
+    uint64_t x = index % width;
+    uint64_t y = index / width;
+
+    if (index < (uint64_t) width * (uint64_t) height) {
+        if (x >= 1 && x < width-1 && y >= 1 && y < height-1) {
+            if (input[index] != 0 && input[index] != 255) {
+                uint64_t y0 = ((y + height - 1) % height) * width;
+                uint64_t y2 = ((y + 1) % height) * width;
+                uint64_t x0 = (x + width - 1) % width;
+                uint64_t x2 = (x + 1) % width;
+
+                if (input[x0 + y0] == 255 || input[x + y0] == 255 || input[x2 + y0] == 255 || input[x0 + y] == 255
+                    || input[x2 + y] == 255 || input[x0 + y2] == 255 || input[x + y2] == 255 || input[x2 + y2] == 255 ) {
+                        hyst[index] = 255;
+                } else {
+                    hyst[index] = 0;
+                }
+            } else {
+                hyst[index] = input[index];
+            }
+        }
+    }
+}
+
+__global__ void writeResult(uint8_t *&resultImage, uint8_t *&calculations, size_t width, size_t height) {
     size_t index = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (index < (uint64_t) width * height) {
-        resultImage[index] = (uint8_t)calculations[index];
+        resultImage[index] = calculations[index];
     }
 }
 
@@ -115,25 +208,60 @@ bool CannyEdgeDetection(uint8_t *originalImage,
     int *SobelY;
     double *G;
     double *angles;
+    double *suppressed;
+    uint8_t *thresh;
+    uint8_t *hyst;
     cudaMallocManaged(&SobelX, width * height * sizeof(int));
     cudaMallocManaged(&SobelY, width * height * sizeof(int));
     cudaMallocManaged(&G, width * height * sizeof(double));
     cudaMallocManaged(&angles, width * height * sizeof(double));
+    cudaMallocManaged(&suppressed, width * height * sizeof(double));
+    cudaMallocManaged(&thresh, width * height * sizeof(uint8_t));
+    cudaMallocManaged(&hyst, width * height * sizeof(uint8_t));
+
     // determine num blocks by roughly dividing the array size by the number of threads
     dim3 blocks = dim3((imageWidth * imageHeight - 1 + threadsCount) / threadsCount, 1, 1);
     // three dimensional variable for number of threads
     dim3 threads = dim3(threadsCount, 1, 1);
+
     // calculate horizontal and vertical gradiant magnitude by convoluting the image with the kernel
     convolution_2d<<<blocks, threads>>>(originalImage, 'x', SobelX, imageWidth, imageHeight);
     convolution_2d<<<blocks, threads>>>(originalImage, 'y', SobelY, imageWidth, imageHeight);
+
+    // calculate grandient for edge detection and angles for nonmax suppression
     calculateGradiantAndAngles<<<blocks, threads>>>(G, angles, SobelX, SobelY, imageWidth, imageHeight);
+    
+    // normalize the gradients to keep the range between 0 and 255
     normalizeG<<<blocks, threads>>>(G, imageWidth, imageHeight);
-    writeResult<<<blocks, threads>>>(resultImage, G, imageWidth, imageHeight);
+
+    // perform nonmaximum suppression to reduce thickness of edges
+    nonmaximumSuppression<<<blocks, threads>>>(G, angles, suppressed, imageWidth, imageHeight);
+
+    // perform double thresholding which sets edges above the high threshold to 255,
+    // edges below the low threshold to 0, above the high threshold are 255 and leaves the rest alone
+    // the ones left alone are considered "weak edges"
+    doubleThreshold<<<blocks, threads>>>(suppressed, thresh, 50, 128, imageWidth, imageHeight);
+    
+    // use the threshold array to perform hysteresis
+    // analyze the weak edges and make them strong edges if they boarder a strong edge
+    // otherwise set that pixel to 0
+    hysteresis<<<blocks, threads>>>(thresh, hyst, imageWidth, imageHeight);
+    // write result to resultImage for postprocessing
+    writeResult<<<blocks, threads>>>(resultImage, hyst, imageWidth, imageHeight);
+
+    // for (uint64_t i=0; i<width*height; i++) {
+    //     std::cout << angles[i] << " ";
+    // }
+
+    // wait for all threads to finish and free helper memory
     cudaDeviceSynchronize();
     cudaFree(SobelX);
     cudaFree(SobelY);
     cudaFree(G);
     cudaFree(angles);
+    cudaFree(suppressed);
+    cudaFree(thresh);
+    cudaFree(hyst);
 
     return true;
 }
@@ -147,16 +275,11 @@ void readBytesFile(std::ifstream &input_file)
 
     // Allocate memory to store the file data
     length = file_size;
-    cudaMallocManaged(&original, length * sizeof(uint8_t));
-    cudaMallocManaged(&result, length * sizeof(uint8_t));    
+    original = new uint8_t[file_size];
+    result = new uint8_t[file_size];
 
     // Read the entire file into the allocated memory
     input_file.read(reinterpret_cast<char *>(original), file_size);
-
-    for (uint64_t i = 0; i < file_size; i++)
-    {
-        result[i] = 0;
-    }
 }
 
 void processImageName(const std::string &filename)
@@ -260,8 +383,10 @@ int main()
     // Close the file
     input_file.close();
 
-    cudaFree(original);
-    cudaFree(result);
+    // cudaFree(original);
+    // cudaFree(result);
+    delete[] original;
+    delete[] result;
 
     return 0;
 }
