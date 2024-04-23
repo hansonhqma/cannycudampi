@@ -122,7 +122,7 @@ int main(int argc, char** argv){
         printf("Proc %d running iteration %d, reading at offset %zu\n", RANK, iter, BYTE_OFFSET);
 
         // grab frame data from file into array
-        MPI_File_read_at(SOURCE_FH, BYTE_OFFSET, frame_data, FRAME_SIZE, MPI_BYTE, MPI_STATUS_IGNORE);
+        MPI_File_read_at(SOURCE_FH, BYTE_OFFSET, (uint8_t*)frame_data, FRAME_SIZE, MPI_BYTE, MPI_STATUS_IGNORE);
 
         printf("result ptr at %p\n", result_data);
 
@@ -131,7 +131,12 @@ int main(int argc, char** argv){
         // write array back into dest file
         MPI_File_write_at(DEST_FH, BYTE_OFFSET, result_data, FRAME_SIZE, MPI_BYTE, MPI_STATUS_IGNORE);
 
-        // printf("result_data[%llu] = %d\n", BYTE_OFFSET, result_data[BYTE_OFFSET]);
+        // if (RANK == 0) {
+        //     for (uint64_t i=100; i<200; i++) {
+        //         printf("frame_data[%llu] = %d\n", i, frame_data[i]);
+        //         printf("result_data[%llu] = %d\n", i, result_data[i]);
+        //     }
+        // }
        
         
     }

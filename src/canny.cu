@@ -28,7 +28,7 @@ extern "C"
                         int rank);
 }
 
-__global__ void convolution_2d(uint8_t *&originalImage, const char maskOption, int *&resultImage, size_t width, size_t height)
+__global__ void convolution_2d(int *&originalImage, const char maskOption, int *&resultImage, size_t width, size_t height)
 {
     int* mask;
     if (maskOption == 'x') {
@@ -207,8 +207,8 @@ bool CannyEdgeDetectionMPI(uint8_t *originalImage,
 {
     cudaSetDevice( rank );
     // Initialize helper memory
-    uint8_t *original_image;
-    uint8_t *result_image;
+    int *original_image = new int[(uint64_t) imageWidth * (uint64_t) imageHeight];
+    int *result_image = new int[(uint64_t) imageWidth * (uint64_t) imageHeight];
     int *SobelX;
     int *SobelY;
     double *G;
@@ -216,10 +216,12 @@ bool CannyEdgeDetectionMPI(uint8_t *originalImage,
     double *suppressed;
     uint8_t *thresh;
     uint8_t *hyst;
-    cudaMallocManaged(&original_image, width * height * sizeof(uint8_t));
-    cudaMallocManaged(&result_image, width * height * sizeof(uint8_t));
-    cudaMemcpy(original_image, originalImage, width * height * sizeof(uint8_t), cudaMemcpyHostToDevice);
-    cudaMemcpy(result_image, resultImage, width * height * sizeof(uint8_t), cudaMemcpyHostToDevice);
+    uint8_t temp = 0;
+    for (uint64_t i = 0; i < (uint64_t) imageWidth * (uint64_t) imageHeight; i++) {
+        original_image[i] = static_cast<int>(originalImage[i]);
+        result_image[i] = static_cast<int>(resultImage[i]);
+    }
+    // std::cout << "Runs\n";
     cudaMallocManaged(&SobelX, width * height * sizeof(int));
     cudaMallocManaged(&SobelY, width * height * sizeof(int));
     cudaMallocManaged(&G, width * height * sizeof(double));
@@ -232,7 +234,7 @@ bool CannyEdgeDetectionMPI(uint8_t *originalImage,
     dim3 blocks = dim3((imageWidth * imageHeight - 1 + threadsCount) / threadsCount, 1, 1);
     // three dimensional variable for number of threads
     dim3 threads = dim3(threadsCount, 1, 1);
-    /*
+    
     // calculate horizontal and vertical gradiant magnitude by convoluting the image with the kernel
     convolution_2d<<<blocks, threads>>>(original_image, 'x', SobelX, imageWidth, imageHeight);
     convolution_2d<<<blocks, threads>>>(original_image, 'y', SobelY, imageWidth, imageHeight);
@@ -256,13 +258,15 @@ bool CannyEdgeDetectionMPI(uint8_t *originalImage,
     // otherwise set that pixel to 0
     hysteresis<<<blocks, threads>>>(thresh, hyst, imageWidth, imageHeight);
     // write result to resultImage for postprocessing
-    writeResult<<<blocks, threads>>>(result_image, hyst, imageWidth, imageHeight);
-    cudaMemcpy(resultImage, result_image, width * height * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+    writeResult<<<blocks, threads>>>(resultImage, hyst, imageWidth, imageHeight);
+    cudaMemcpy(resultImage, resultImage, width * height * sizeof(uint8_t), cudaMemcpyDeviceToHost);
 
-    // for (uint64_t i=100; i<200; i++) {
-    //     std::cout << angles[i] << " ";
-    // }
-    */
+    if (rank == 0) {
+        for (uint64_t i=100; i<200; i++) {
+            std::cout << (result_image[i]) << " ";
+        }
+    }
+    
     // wait for all threads to finish and free helper memory
     cudaDeviceSynchronize();
     cudaFree(original_image);
@@ -278,6 +282,7 @@ bool CannyEdgeDetectionMPI(uint8_t *originalImage,
     return true;
 }
 
+/*
 // helper function which lauches the kernel each iteration
 bool CannyEdgeDetection(uint8_t *originalImage,
                         uint8_t *resultImage,
@@ -297,8 +302,10 @@ bool CannyEdgeDetection(uint8_t *originalImage,
     uint8_t *hyst;
     cudaMallocManaged(&original_image, width * height * sizeof(uint8_t));
     cudaMallocManaged(&result_image, width * height * sizeof(uint8_t));
-    cudaMemcpy(original_image, originalImage, width * height * sizeof(uint8_t), cudaMemcpyHostToDevice);
-    cudaMemcpy(result_image, resultImage, width * height * sizeof(uint8_t), cudaMemcpyHostToDevice);
+    for (uint64_t i = 0; i < (uint64_t) imageWidth * (uint64_t) imageHeight; i++) {
+        original_image[i] = (uint8_t) static_cast<int>(originalImage[i]);
+        result_image[i] = (uint8_t) static_cast<int>(resultImage[i]);
+    }
     cudaMallocManaged(&SobelX, width * height * sizeof(int));
     cudaMallocManaged(&SobelY, width * height * sizeof(int));
     cudaMallocManaged(&G, width * height * sizeof(double));
@@ -356,6 +363,7 @@ bool CannyEdgeDetection(uint8_t *originalImage,
 
     return true;
 }
+*/
 
 void readBytesFile(std::ifstream &input_file)
 {
