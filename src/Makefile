@@ -1,5 +1,5 @@
-all: highlife_mpi.c highlife.cu
-	mpixlc -O3 highlife_mpi.c -c -o highlife-mpi.o
-	nvcc -O3 -arch=sm_70 highlife.cu -c -o highlife-cuda.o
-	mpicc -O3 highlife-mpi.o highlife-cuda.o -o highlife-exe \
+all: main.c canny.cu
+	mpixlc -O3 main.c -c -o main.o
+	nvcc -O3 -arch=sm_70 canny.cu -c -o canny.o --expt-relaxed-constexpr
+	mpicc -O3 main.o canny.o -o canny \
 	-L/usr/local/cuda-11.2/lib64/ -lcudadevrt -lcudart -lstdc++
