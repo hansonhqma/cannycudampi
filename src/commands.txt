@@ -1,6 +1,6 @@
 module load xl_r spectrum-mpi cuda/11.2
 make
-salloc -N 1 --partition=el8 --gres=gpu:4 -t 5
+salloc -N 1 --partition=el8-rpi --gres=gpu:4 -t 5
 mpirun -np 32 ./canny 1920_1080_32.dat 1024
 
 Usage: mpirun -np {MPI_World_Size} ./canny <input_file> <thread_count>
