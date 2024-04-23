@@ -1,4 +1,15 @@
-module load xl_r spectrum-mpi cuda
-nvcc -O3 -gencode arch=compute_70,code=sm_70 canny.cu -o canny --expt-relaxed-constexpr
+module load xl_r spectrum-mpi cuda/11.2
+make
 salloc -N 1 --partition=el8 --gres=gpu:4 -t 5
-./canny
+mpirun -np 32 ./canny 1920_1080_32.dat 1024
+
+Usage: mpirun -np {MPI_World_Size} ./canny <input_file> <thread_count>
+
+
+Others:
+nvcc -O3 -gencode arch=compute_70,code=sm_70 canny.cu -o canny --expt-relaxed-constexpr
+
+module load xl_r spectrum-mpi cuda
+nvcc -O3 -gencode arch=compute_70,code=sm_70 sobel.cu -o sobel
+salloc -N 1 --partition=el8 --gres=gpu:4 -t 5
+./sobel

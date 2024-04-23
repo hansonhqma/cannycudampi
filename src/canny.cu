@@ -20,11 +20,12 @@ int height = 0;
 
 extern "C"
 {
-    bool CannyEdgeDetection(uint8_t *originalImage,
+    bool CannyEdgeDetectionMPI(uint8_t *originalImage,
                         uint8_t *resultImage,
                         size_t imageWidth,
                         size_t imageHeight,
-                        int threadsCount);
+                        int threadsCount,
+                        int rank);
 }
 
 __global__ void convolution_2d(uint8_t *&originalImage, const char maskOption, int *&resultImage, size_t width, size_t height)
@@ -197,13 +198,17 @@ __global__ void writeResult(uint8_t *&resultImage, uint8_t *&calculations, size_
 }
 
 // helper function which lauches the kernel each iteration
-bool CannyEdgeDetection(uint8_t *originalImage,
+bool CannyEdgeDetectionMPI(uint8_t *originalImage,
                         uint8_t *resultImage,
                         size_t imageWidth,
                         size_t imageHeight,
-                        int threadsCount)
+                        int threadsCount,
+                        int rank)
 {
+    cudaSetDevice( rank );
     // Initialize helper memory
+    uint8_t *original_image;
+    uint8_t *result_image;
     int *SobelX;
     int *SobelY;
     double *G;
@@ -211,6 +216,10 @@ bool CannyEdgeDetection(uint8_t *originalImage,
     double *suppressed;
     uint8_t *thresh;
     uint8_t *hyst;
+    cudaMallocManaged(&original_image, width * height * sizeof(uint8_t));
+    cudaMallocManaged(&result_image, width * height * sizeof(uint8_t));
+    cudaMemcpy(original_image, originalImage, width * height * sizeof(uint8_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(result_image, resultImage, width * height * sizeof(uint8_t), cudaMemcpyHostToDevice);
     cudaMallocManaged(&SobelX, width * height * sizeof(int));
     cudaMallocManaged(&SobelY, width * height * sizeof(int));
     cudaMallocManaged(&G, width * height * sizeof(double));
@@ -218,15 +227,15 @@ bool CannyEdgeDetection(uint8_t *originalImage,
     cudaMallocManaged(&suppressed, width * height * sizeof(double));
     cudaMallocManaged(&thresh, width * height * sizeof(uint8_t));
     cudaMallocManaged(&hyst, width * height * sizeof(uint8_t));
-
+    
     // determine num blocks by roughly dividing the array size by the number of threads
     dim3 blocks = dim3((imageWidth * imageHeight - 1 + threadsCount) / threadsCount, 1, 1);
     // three dimensional variable for number of threads
     dim3 threads = dim3(threadsCount, 1, 1);
-
+    /*
     // calculate horizontal and vertical gradiant magnitude by convoluting the image with the kernel
-    convolution_2d<<<blocks, threads>>>(originalImage, 'x', SobelX, imageWidth, imageHeight);
-    convolution_2d<<<blocks, threads>>>(originalImage, 'y', SobelY, imageWidth, imageHeight);
+    convolution_2d<<<blocks, threads>>>(original_image, 'x', SobelX, imageWidth, imageHeight);
+    convolution_2d<<<blocks, threads>>>(original_image, 'y', SobelY, imageWidth, imageHeight);
 
     // calculate grandient for edge detection and angles for nonmax suppression
     calculateGradiantAndAngles<<<blocks, threads>>>(G, angles, SobelX, SobelY, imageWidth, imageHeight);
@@ -247,14 +256,96 @@ bool CannyEdgeDetection(uint8_t *originalImage,
     // otherwise set that pixel to 0
     hysteresis<<<blocks, threads>>>(thresh, hyst, imageWidth, imageHeight);
     // write result to resultImage for postprocessing
-    writeResult<<<blocks, threads>>>(resultImage, hyst, imageWidth, imageHeight);
+    writeResult<<<blocks, threads>>>(result_image, hyst, imageWidth, imageHeight);
+    cudaMemcpy(resultImage, result_image, width * height * sizeof(uint8_t), cudaMemcpyDeviceToHost);
 
-    // for (uint64_t i=0; i<width*height; i++) {
+    // for (uint64_t i=100; i<200; i++) {
+    //     std::cout << angles[i] << " ";
+    // }
+    */
+    // wait for all threads to finish and free helper memory
+    cudaDeviceSynchronize();
+    cudaFree(original_image);
+    cudaFree(result_image);
+    cudaFree(SobelX);
+    cudaFree(SobelY);
+    cudaFree(G);
+    cudaFree(angles);
+    cudaFree(suppressed);
+    cudaFree(thresh);
+    cudaFree(hyst);
+
+    return true;
+}
+
+// helper function which lauches the kernel each iteration
+bool CannyEdgeDetection(uint8_t *originalImage,
+                        uint8_t *resultImage,
+                        size_t imageWidth,
+                        size_t imageHeight,
+                        int threadsCount)
+{
+    // Initialize helper memory
+    uint8_t *original_image;
+    uint8_t *result_image;
+    int *SobelX;
+    int *SobelY;
+    double *G;
+    double *angles;
+    double *suppressed;
+    uint8_t *thresh;
+    uint8_t *hyst;
+    cudaMallocManaged(&original_image, width * height * sizeof(uint8_t));
+    cudaMallocManaged(&result_image, width * height * sizeof(uint8_t));
+    cudaMemcpy(original_image, originalImage, width * height * sizeof(uint8_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(result_image, resultImage, width * height * sizeof(uint8_t), cudaMemcpyHostToDevice);
+    cudaMallocManaged(&SobelX, width * height * sizeof(int));
+    cudaMallocManaged(&SobelY, width * height * sizeof(int));
+    cudaMallocManaged(&G, width * height * sizeof(double));
+    cudaMallocManaged(&angles, width * height * sizeof(double));
+    cudaMallocManaged(&suppressed, width * height * sizeof(double));
+    cudaMallocManaged(&thresh, width * height * sizeof(uint8_t));
+    cudaMallocManaged(&hyst, width * height * sizeof(uint8_t));
+
+    // determine num blocks by roughly dividing the array size by the number of threads
+    dim3 blocks = dim3((imageWidth * imageHeight - 1 + threadsCount) / threadsCount, 1, 1);
+    // three dimensional variable for number of threads
+    dim3 threads = dim3(threadsCount, 1, 1);
+
+    // calculate horizontal and vertical gradiant magnitude by convoluting the image with the kernel
+    convolution_2d<<<blocks, threads>>>(original_image, 'x', SobelX, imageWidth, imageHeight);
+    convolution_2d<<<blocks, threads>>>(original_image, 'y', SobelY, imageWidth, imageHeight);
+
+    // calculate grandient for edge detection and angles for nonmax suppression
+    calculateGradiantAndAngles<<<blocks, threads>>>(G, angles, SobelX, SobelY, imageWidth, imageHeight);
+    
+    // normalize the gradients to keep the range between 0 and 255
+    normalizeG<<<blocks, threads>>>(G, imageWidth, imageHeight);
+
+    // perform nonmaximum suppression to reduce thickness of edges
+    nonmaximumSuppression<<<blocks, threads>>>(G, angles, suppressed, imageWidth, imageHeight);
+
+    // perform double thresholding which sets edges above the high threshold to 255,
+    // edges below the low threshold to 0, above the high threshold are 255 and leaves the rest alone
+    // the ones left alone are considered "weak edges"
+    doubleThreshold<<<blocks, threads>>>(suppressed, thresh, 50, 128, imageWidth, imageHeight);
+    
+    // use the threshold array to perform hysteresis
+    // analyze the weak edges and make them strong edges if they boarder a strong edge
+    // otherwise set that pixel to 0
+    hysteresis<<<blocks, threads>>>(thresh, hyst, imageWidth, imageHeight);
+    // write result to resultImage for postprocessing
+    writeResult<<<blocks, threads>>>(result_image, hyst, imageWidth, imageHeight);
+    cudaMemcpy(resultImage, result_image, width * height * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+
+    // for (uint64_t i=100; i<200; i++) {
     //     std::cout << angles[i] << " ";
     // }
 
     // wait for all threads to finish and free helper memory
     cudaDeviceSynchronize();
+    cudaFree(original_image);
+    cudaFree(result_image);
     cudaFree(SobelX);
     cudaFree(SobelY);
     cudaFree(G);
@@ -355,38 +446,38 @@ void print_bytes()
     std::cout << std::endl;
 }
 
-int main()
-{
-    // Specify the file path
-    std::string file_path = "2340_1755.dat"; // Change this to your file path
+// int main()
+// {
+//     // Specify the file path
+//     std::string file_path = "32_32.dat"; // Change this to your file path
 
-    // Open the file in binary mode for reading
-    std::ifstream input_file(file_path, std::ios::binary);
+//     // Open the file in binary mode for reading
+//     std::ifstream input_file(file_path, std::ios::binary);
 
-    // Check if the file opened successfully
-    if (!input_file)
-    {
-        std::cerr << "Failed to open file: " << file_path << std::endl;
-        return 1;
-    }
+//     // Check if the file opened successfully
+//     if (!input_file)
+//     {
+//         std::cerr << "Failed to open file: " << file_path << std::endl;
+//         return 1;
+//     }
 
-    // extract the width and height
-    processImageName(file_path);
-    // initialize original and result arrays
-    // read the bytes into original
-    readBytesFile(input_file);
-    // perform Canny edge detection
-    CannyEdgeDetection(original, result, width, height, 1024);
-    //  write the result bytes to a file
-    writeBytesFile(file_path);
+//     // extract the width and height
+//     processImageName(file_path);
+//     // initialize original and result arrays
+//     // read the bytes into original
+//     readBytesFile(input_file);
+//     // perform Canny edge detection
+//     CannyEdgeDetection(original, result, width, height, 1024);
+//     //  write the result bytes to a file
+//     writeBytesFile(file_path);
 
-    // Close the file
-    input_file.close();
+//     // Close the file
+//     input_file.close();
 
-    // cudaFree(original);
-    // cudaFree(result);
-    delete[] original;
-    delete[] result;
+//     // cudaFree(original);
+//     // cudaFree(result);
+//     delete[] original;
+//     delete[] result;
 
-    return 0;
-}
+//     return 0;
+// }
