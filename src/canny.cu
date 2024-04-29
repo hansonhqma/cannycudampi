@@ -198,8 +198,23 @@ bool CannyEdgeDetectionMPI(uint8_t *originalImage,
                         size_t imageHeight,
                         int threadsCount,
                         int rank)
+
 {
-    cudaSetDevice( rank );
+
+    int availableCudaDevices;
+
+    cudaGetDeviceCount(&availableCudaDevices);
+
+    int selected_cuda_device = rank % availableCudaDevices;
+
+    printf("rank %d selecting device %d\n", rank, selected_cuda_device);
+
+    cudaError_t err = cudaSetDevice(selected_cuda_device);
+
+    if(err){
+        perror("cudaSetDevice failed");
+    }
+
     // Initialize helper memory
     int *SobelX;
     int *SobelY;
@@ -228,6 +243,7 @@ bool CannyEdgeDetectionMPI(uint8_t *originalImage,
     dim3 blocks = dim3((imageWidth * imageHeight - 1 + threadsCount) / threadsCount, 1, 1);
     // three dimensional variable for number of threads
     dim3 threads = dim3(threadsCount, 1, 1);
+
     
     // calculate horizontal and vertical gradiant magnitude by convoluting the image with the kernel
     convolution_2d<<<blocks, threads>>>(originalImage, 'x', SobelX, imageWidth, imageHeight);
@@ -254,12 +270,6 @@ bool CannyEdgeDetectionMPI(uint8_t *originalImage,
     // write result to resultImage for postprocessing
     writeResult<<<blocks, threads>>>(resultImage, hyst, imageWidth, imageHeight);
 
-    if (rank == 0) {
-        for (uint64_t i=100; i<200; i++) {
-            std::cout << (hyst[i]) << " ";
-        }
-    }
-    
     // wait for all threads to finish and free helper memory
     cudaDeviceSynchronize();
     cudaFree(SobelX);
